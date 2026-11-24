@@ -27,7 +27,7 @@ pip install "python-telegram-bot>=20.0"
 ### 2️⃣ Config (bot.py)
 ```python
 BOT_TOKEN      = "YOUR_BOT_TOKEN"
-CHANNEL_ID     = "@UserProtectorHub"      # owner ka main channel
+CHANNEL_ID     = "@UPH_TEAM"      # owner ka main channel
 OWNER_ID       = 123456789                 # aapki ID
 LOGGER_CHAT_ID = -1001234567890            # logger group ID
 POST_IMAGE     = "meet_our_team.jpg"
