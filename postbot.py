@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import asyncio
 from datetime import datetime
 
 from telegram import (
@@ -16,9 +17,9 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 BOT_TOKEN      = "YOUR_BOT_TOKEN"
-CHANNEL_ID     = "@UserProtectorHub"
-OWNER_ID       = 123456789
-LOGGER_CHAT_ID = -1001234567890
+CHANNEL_ID     = "YOUR_CHANNEL_ID"
+OWNER_ID       = YOUR_ID
+LOGGER_CHAT_ID = YOUR__LOGGERCHAT_ID
 POST_IMAGE     = "meet_our_team.jpg"
 DATA_FILE      = "user_admins.json"
 # ==========================================
@@ -188,7 +189,7 @@ def owner_only(func):
 
 
 # ============ STATES ============
-ASK_NAME, ASK_TARGET, ASK_CHANNEL = range(3)
+ASK_NAME, ASK_TARGET, ASK_CHANNEL, ASK_CUSTOM_CONTENT = range(4)
 
 
 # ============ /start ============
@@ -208,7 +209,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/addchannel — Apna channel add\n"
         "/mychannels — Apne channels\n"
         "/removechannel — Channel remove\n"
-        "/post — Channel par post\n\n"
+        "/post — Admin buttons ke saath post\n"
+        "/custom — Bina buttons ke post (Text/Image)\n\n"
         "/cancel — Cancel"
     )
     await update.message.reply_text(text)
@@ -229,9 +231,7 @@ async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return ASK_NAME
     context.user_data["new_admin_name"] = update.message.text.strip()
-    await update.message.reply_text(
-        "Step 2️⃣ — Ab username (bina @) ya User ID bhejein:"
-    )
+    await update.message.reply_text("Step 2️⃣ — Ab username (bina @) ya User ID bhejein:")
     return ASK_TARGET
 
 
@@ -266,14 +266,14 @@ async def add_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await log_to_group(
         context.bot,
-        f"➕ Admin added\n👤 {user_label(user)}\n"
-        f"🔗 {name} → {display}\n📊 Total: {len(udata['admins'])}"
+        f"➕ Admin added\n👤 {user_label(user)}\n🔗 {name} → {display}\n📊 Total: {len(udata['admins'])}"
     )
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("new_admin_name", None)
+    context.user_data.pop("custom_channel", None)
     await update.message.reply_text("❌ Cancelled.")
     return ConversationHandler.END
 
@@ -347,56 +347,30 @@ async def addchannel_process(update, context, channel_input):
         bot_member = await context.bot.get_chat_member(channel_input, context.bot.id)
         if bot_member.status not in ("administrator", "creator"):
             await update.effective_message.reply_text(
-                "❌ Bot is channel ka admin nahi hai.\n"
-                "Pehle bot ko channel mein add + admin banayein."
-            )
-            await log_to_group(
-                context.bot,
-                f"❌ Channel add failed (not admin)\n"
-                f"👤 {user_label(user)}\n📢 {channel_input}"
+                "❌ Bot is channel ka admin nahi hai.\nPehle bot ko channel mein add + admin banayein."
             )
             return ConversationHandler.END
         chat = await context.bot.get_chat(channel_input)
     except Exception as e:
-        await update.effective_message.reply_text(
-            f"❌ Channel verify fail:\n{e}\n\n"
-            "Check karo: bot admin hai? ID sahi hai?"
-        )
-        await log_to_group(
-            context.bot,
-            f"❌ Channel add error\n👤 {user_label(user)}\n"
-            f"📢 {channel_input}\n⚠️ {e}"
-        )
+        await update.effective_message.reply_text(f"❌ Channel verify fail:\n{e}")
         return ConversationHandler.END
 
     if chat.type != "channel":
-        await update.effective_message.reply_text(
-            "❌ Sirf channels add kar sakte hain (groups nahi)."
-        )
+        await update.effective_message.reply_text("❌ Sirf channels add kar sakte hain (groups nahi).")
         return ConversationHandler.END
 
     if any(c["id"] == chat.id for c in udata["channels"]):
         await update.effective_message.reply_text("⚠️ Yeh channel already added hai.")
         return ConversationHandler.END
 
-    udata["channels"].append({
-        "id": chat.id,
-        "username": chat.username,
-        "title": chat.title,
-    })
+    udata["channels"].append({"id": chat.id, "username": chat.username, "title": chat.title})
     save_data()
 
-    title = html.escape(chat.title or "Channel")
     await update.effective_message.reply_text(
-        f"✅ Channel added!\n\n📢 {chat.title}\n🆔 <code>{chat.id}</code>\n\n"
-        "Ab /post se yahan post kar sakte hain.",
+        f"✅ Channel added!\n\n📢 {chat.title}\n🆔 <code>{chat.id}</code>\n\nAb /post ya /custom se post karein.",
         parse_mode="HTML"
     )
-    await log_to_group(
-        context.bot,
-        f"📢 Channel added\n👤 {user_label(user)}\n"
-        f"📢 {chat.title} ({chat.id})"
-    )
+    await log_to_group(context.bot, f"📢 Channel added\n👤 {user_label(user)}\n📢 {chat.title} ({chat.id})")
     return ConversationHandler.END
 
 
@@ -419,71 +393,46 @@ async def removechannel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not udata["channels"]:
         await update.message.reply_text("❌ Koi channel nahi.")
         return
-    buttons = [[InlineKeyboardButton(f"❌ {c['title']}", callback_data=f"rmch_{c['id']}")]
-               for c in udata["channels"]]
-    await update.message.reply_text(
-        "Kis channel ko remove karna hai?",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    buttons = [[InlineKeyboardButton(f"❌ {c['title']}", callback_data=f"rmch_{c['id']}")] for c in udata["channels"]]
+    await update.message.reply_text("Kis channel ko remove karna hai?", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def removechannel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    try:
-        await q.answer()
-    except Exception:
-        pass
+    await q.answer()
     try:
         cid = int(q.data.replace("rmch_", ""))
-    except (ValueError, TypeError):
-        await q.edit_message_text("❌ Invalid data.")
-        return
-
-    user = q.from_user
-    udata = ensure_user(user)
-    before = len(udata["channels"])
+    except ValueError:
+        return await q.edit_message_text("❌ Invalid data.")
+    
+    udata = ensure_user(q.from_user)
     udata["channels"] = [c for c in udata["channels"] if c["id"] != cid]
     save_data()
-
-    if len(udata["channels"]) < before:
-        await q.edit_message_text("✅ Channel remove ho gaya.")
-        await log_to_group(
-            context.bot,
-            f"🗑️ Channel removed\n👤 {user_label(user)}\n📢 ID: {cid}"
-        )
-    else:
-        await q.edit_message_text("⚠️ Channel nahi mila.")
+    await q.edit_message_text("✅ Channel remove ho gaya (agar tha).")
+    await log_to_group(context.bot, f"🗑️ Channel removed\n👤 {user_label(q.from_user)}\n📢 ID: {cid}")
 
 
-# ============ /post ============
+# ============ /post (WITH BUTTONS) ============
 async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     udata = ensure_user(user)
     if not udata["admins"]:
-        await update.message.reply_text("❌ Pehle /add se admin add karein.")
-        return
+        return await update.message.reply_text("❌ Pehle /add se admin add karein.")
     if not udata["channels"]:
-        await update.message.reply_text("❌ Pehle /addchannel se channel add karein.")
-        return
+        return await update.message.reply_text("❌ Pehle /addchannel se channel add karein.")
 
     if context.args:
         target = " ".join(context.args).lstrip("@")
         for c in udata["channels"]:
-            if str(c["id"]) == target or \
-               (c.get("username") and c["username"].lower() == target.lower()):
+            if str(c["id"]) == target or (c.get("username") and c["username"].lower() == target.lower()):
                 return await do_post(update, context, c)
-        await update.message.reply_text("❌ Channel nahi mila. /mychannels dekhein.")
-        return
+        return await update.message.reply_text("❌ Channel nahi mila. /mychannels dekhein.")
 
     if len(udata["channels"]) == 1:
         return await do_post(update, context, udata["channels"][0])
 
-    buttons = [[InlineKeyboardButton(f"📢 {c['title']}", callback_data=f"postch_{c['id']}")]
-               for c in udata["channels"]]
-    await update.message.reply_text(
-        "Kis channel par post karna hai?",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    buttons = [[InlineKeyboardButton(f"📢 {c['title']}", callback_data=f"postch_{c['id']}")] for c in udata["channels"]]
+    await update.message.reply_text("Kis channel par post karna hai?", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def do_post(update, context, channel):
@@ -493,117 +442,167 @@ async def do_post(update, context, channel):
 
     try:
         await send_post_to(context.bot, channel["id"], udata["admins"])
-        await target_msg.reply_text(
-            f"✅ Post bhej diya!\n📢 {channel['title']}\n"
-            f"🔢 {len(udata['admins'])} buttons"
-        )
-        await log_to_group(
-            context.bot,
-            f"📤 Post sent\n👤 {user_label(user)}\n"
-            f"📢 {channel['title']} ({channel['id']})\n"
-            f"🔢 {len(udata['admins'])} buttons"
-        )
+        msg_text = f"✅ Post bhej diya!\n📢 {channel['title']}\n🔢 {len(udata['admins'])} buttons"
+        if update.callback_query:
+            await update.callback_query.edit_message_text(msg_text)
+        else:
+            await update.message.reply_text(msg_text)
+        await log_to_group(context.bot, f"📤 Post sent\n👤 {user_label(user)}\n📢 {channel['title']}\n🔢 {len(udata['admins'])} buttons")
     except Exception as e:
-        await target_msg.reply_text(f"❌ Post failed: {e}")
-        await log_to_group(
-            context.bot,
-            f"❌ Post failed\n👤 {user_label(user)}\n"
-            f"📢 {channel.get('title')}\n⚠️ {e}"
-        )
+        msg_text = f"❌ Post failed: {e}"
+        if update.callback_query:
+            await update.callback_query.edit_message_text(msg_text)
+        else:
+            await update.message.reply_text(msg_text)
+        await log_to_group(context.bot, f"❌ Post failed\n👤 {user_label(user)}\n⚠️ {e}")
 
 
 async def post_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    try:
-        await q.answer()
-    except Exception:
-        pass
+    await q.answer()
     try:
         cid = int(q.data.replace("postch_", ""))
-    except (ValueError, TypeError):
-        await q.edit_message_text("❌ Invalid data.")
-        return
+    except ValueError:
+        return await q.edit_message_text("❌ Invalid data.")
+    
+    udata = ensure_user(q.from_user)
+    channel = next((c for c in udata["channels"] if c["id"] == cid), None)
+    if not channel:
+        return await q.edit_message_text("❌ Channel nahi mila.")
+    await do_post(update, context, channel)
+
+
+# ============ /custom (WITHOUT BUTTONS) ============
+async def custom_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    udata = ensure_user(user)
+    if not udata["channels"]:
+        await update.message.reply_text("❌ Pehle /addchannel se channel add karein.")
+        return ConversationHandler.END
+
+    if len(udata["channels"]) == 1:
+        context.user_data["custom_channel"] = udata["channels"][0]
+        await update.message.reply_text(
+            f"📢 Channel selected: <b>{udata['channels'][0]['title']}</b>\n\n"
+            "Ab apna post content bhejein:\n"
+            "• Simple Text\n"
+            "• Only Image\n"
+            "• Image + Text (caption)\n\n"
+            "Cancel: /cancel",
+            parse_mode="HTML"
+        )
+        return ASK_CUSTOM_CONTENT
+
+    buttons = [[InlineKeyboardButton(f"📢 {c['title']}", callback_data=f"customch_{c['id']}")] for c in udata["channels"]]
+    await update.message.reply_text("Kis channel par post karna hai?", reply_markup=InlineKeyboardMarkup(buttons))
+    return ASK_CUSTOM_CONTENT
+
+
+async def custom_channel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    try:
+        cid = int(q.data.replace("customch_", ""))
+    except ValueError:
+        return await q.edit_message_text("❌ Invalid data.")
 
     udata = ensure_user(q.from_user)
     channel = next((c for c in udata["channels"] if c["id"] == cid), None)
     if not channel:
-        await q.edit_message_text("❌ Channel nahi mila.")
-        return
-    await do_post(update, context, channel)
+        return await q.edit_message_text("❌ Channel nahi mila.")
+    
+    context.user_data["custom_channel"] = channel
+    await q.edit_message_text(
+        f"📢 Channel selected: <b>{channel['title']}</b>\n\n"
+        "Ab apna post content bhejein:\n"
+        "• Simple Text\n"
+        "• Only Image\n"
+        "• Image + Text (caption)\n\n"
+        "Cancel: /cancel",
+        parse_mode="HTML"
+    )
+    return ASK_CUSTOM_CONTENT
+
+
+async def receive_custom_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    channel = context.user_data.get("custom_channel")
+    if not channel:
+        await update.message.reply_text("❌ Channel select nahi hua. /custom dobara try karein.")
+        return ConversationHandler.END
+
+    msg = update.message
+    user = update.effective_user
+    
+    try:
+        if msg.photo:
+            await context.bot.send_photo(chat_id=channel["id"], photo=msg.photo[-1].file_id, caption=msg.caption or "")
+        elif msg.document and msg.document.mime_type.startswith("image/"):
+            await context.bot.send_document(chat_id=channel["id"], document=msg.document.file_id, caption=msg.caption or "")
+        elif msg.text:
+            await context.bot.send_message(chat_id=channel["id"], text=msg.text)
+        else:
+            await msg.reply_text("❌ Sirf Text ya Image bhejein. /custom dobara try karein.")
+            return ConversationHandler.END
+
+        await msg.reply_text(f"✅ Post bina buttons ke bhej diya gaya!\n📢 {channel['title']}")
+        await log_to_group(context.bot, f"📤 Custom Post (No Buttons)\n👤 {user_label(user)}\n📢 {channel['title']} ({channel['id']})")
+    except Exception as e:
+        await msg.reply_text(f"❌ Post failed: {e}")
+        await log_to_group(context.bot, f"❌ Custom Post failed\n👤 {user_label(user)}\n⚠️ {e}")
+
+    context.user_data.pop("custom_channel", None)
+    return ConversationHandler.END
 
 
 # ============ OWNER-ONLY ============
 @owner_only
 async def seed_defaults(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    udata = ensure_user(user)
+    udata = ensure_user(update.effective_user)
     udata["admins"].extend(DEFAULT_ADMINS)
     save_data()
     await update.message.reply_text(f"✅ {len(DEFAULT_ADMINS)} default admins load ho gaye.")
-    await log_to_group(context.bot, f"🌱 Default admins seeded\n👤 {user_label(user)}")
-
+    await log_to_group(context.bot, f"🌱 Default admins seeded\n👤 {user_label(update.effective_user)}")
 
 @owner_only
 async def send_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    udata = ensure_user(user)
+    udata = ensure_user(update.effective_user)
     if not udata["admins"]:
-        await update.message.reply_text("❌ Pehle /add ya /seed karein.")
-        return
+        return await update.message.reply_text("❌ Pehle /add ya /seed karein.")
     try:
         await send_post_to(context.bot, CHANNEL_ID, udata["admins"])
         await update.message.reply_text("✅ MAIN channel par post bhej diya!")
-        await log_to_group(
-            context.bot,
-            f"📤 Owner → MAIN\n👤 {user_label(user)}\n"
-            f"📢 {CHANNEL_ID}\n🔢 {len(udata['admins'])} buttons"
-        )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
-        await log_to_group(context.bot, f"❌ Owner send failed\n⚠️ {e}")
-
 
 @owner_only
 async def sendtext_only(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    udata = ensure_user(user)
+    udata = ensure_user(update.effective_user)
     kb = build_keyboard(udata["admins"]) if udata["admins"] else None
     if not kb:
-        await update.message.reply_text("❌ Pehle /add ya /seed.")
-        return
+        return await update.message.reply_text("❌ Pehle /add ya /seed.")
     try:
         await context.bot.send_message(chat_id=CHANNEL_ID, text=POST_TEXT, reply_markup=kb)
         await update.message.reply_text("✅ Text post bhej diya!")
-        await log_to_group(context.bot, f"📤 Owner text-posted\n👤 {user_label(user)}")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
-
 
 @owner_only
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_data:
-        await update.message.reply_text("❌ Koi user nahi.")
-        return
+        return await update.message.reply_text("❌ Koi user nahi.")
     lines = [f"👥 Total Users: {len(user_data)}\n"]
     for uid, d in user_data.items():
         info = d.get("info", {})
-        name = info.get("name", "?")
-        uname = f"@{info['username']}" if info.get("username") else "no-username"
-        lines.append(
-            f"• {name} ({uname}) [{uid}]\n"
-            f"   → {len(d.get('admins', []))} admins, {len(d.get('channels', []))} channels"
-        )
+        lines.append(f"• {info.get('name', '?')} [<code>{uid}</code>]\n   → {len(d.get('admins', []))} admins, {len(d.get('channels', []))} channels")
         if len(lines) > 40:
             lines.append("... (truncated)")
             break
-    await update.message.reply_text("\n".join(lines))
-
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 @owner_only
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Usage: /broadcast <message>")
-        return
+        return await update.message.reply_text("Usage: /broadcast <message>")
     msg = " ".join(context.args)
     sent = failed = 0
     for uid in list(user_data.keys()):
@@ -613,23 +612,18 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             failed += 1
     await update.message.reply_text(f"📤 Broadcast: ✅ {sent} | ❌ {failed}")
-    await log_to_group(context.bot, f"📢 Broadcast by owner\n✅ {sent} | ❌ {failed}")
 
 
 # ============ HEALTH CHECK ============
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong! Bot alive hai.")
 
-
 # ============ ERROR HANDLER ============
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     err = context.error
     log.error(f"Exception: {type(err).__name__}: {err}")
     try:
-        await log_to_group(
-            context.bot,
-            f"❌ BOT ERROR\n⚠️ {type(err).__name__}: {err}"
-        )
+        await log_to_group(context.bot, f"❌ BOT ERROR\n⚠️ {type(err).__name__}: {err}")
     except Exception:
         pass
 
@@ -645,7 +639,8 @@ async def post_init(app: Application):
         BotCommand("addchannel", "Apna channel add"),
         BotCommand("mychannels", "Apne channels"),
         BotCommand("removechannel", "Channel remove"),
-        BotCommand("post", "Channel par post"),
+        BotCommand("post", "Admin buttons ke saath post"),
+        BotCommand("custom", "Bina buttons ke post"),
         BotCommand("cancel", "Cancel"),
         BotCommand("ping", "Health check"),
     ]
@@ -658,29 +653,28 @@ async def post_init(app: Application):
     ]
     try:
         await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
-        log.info("✅ Default commands set")
-    except Exception as e:
-        log.warning(f"Default commands failed: {e}")
-    try:
         await app.bot.set_my_commands(owner_cmds, scope=BotCommandScopeChat(chat_id=OWNER_ID))
-        log.info("✅ Owner commands set")
+        log.info("✅ Commands set successfully")
     except Exception as e:
-        log.warning(f"Owner commands failed (did you /start the bot?): {e}")
-    try:
-        await log_to_group(app.bot, "🚀 Bot started successfully!")
-    except Exception:
-        pass
+        log.warning(f"Command setup error: {e}")
 
 
 # ============ MAIN ============
 def main():
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        print("❌ BOT_TOKEN set karo (bot.py ke top mein)!")
+        print("❌ BOT_TOKEN set karo!")
         return
     if not OWNER_ID:
         print("❌ OWNER_ID set karo!")
         return
 
+    # Fix for Python 3.14 asyncio issue in Termux
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
     try:
         app = Application.builder() \
             .token(BOT_TOKEN) \
@@ -694,6 +688,7 @@ def main():
         print(f"❌ Bot init failed: {e}")
         return
 
+    # Conversations
     add_conv = ConversationHandler(
         entry_points=[CommandHandler("add", add_start)],
         states={
@@ -701,21 +696,36 @@ def main():
             ASK_TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
     )
+
     addch_conv = ConversationHandler(
         entry_points=[CommandHandler("addchannel", addchannel_start)],
         states={
             ASK_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, addchannel_input)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=False,
+    )
+    
+    custom_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("custom", custom_post_start),
+            CallbackQueryHandler(custom_channel_callback, pattern=r"^customch_")
+        ],
+        states={
+            ASK_CUSTOM_CONTENT: [
+                MessageHandler(filters.PHOTO | filters.Document.IMAGE | filters.TEXT, receive_custom_content)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(add_conv)
     app.add_handler(addch_conv)
+    app.add_handler(custom_conv)
+    
     app.add_handler(CommandHandler("list", list_admins))
     app.add_handler(CommandHandler("preview", preview))
     app.add_handler(CommandHandler("clear", clear_admins))
@@ -731,11 +741,11 @@ def main():
 
     app.add_handler(CallbackQueryHandler(post_callback, pattern=r"^postch_"))
     app.add_handler(CallbackQueryHandler(removechannel_callback, pattern=r"^rmch_"))
-
+    
     app.add_error_handler(error_handler)
 
-    print("✅ Bot starting... Press Ctrl+C to stop.")
-    app.run_polling(drop_pending_updates=True)
+    print("✅ Bot starting successfully... Press Ctrl+C to stop.")
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
